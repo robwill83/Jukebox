@@ -141,7 +141,8 @@ button:focus-visible,.strip:focus-visible,input:focus-visible,select:focus-visib
 [hidden]{display:none!important}
 @media(max-width:720px){.stage,.ctrl,.wins{grid-template-columns:1fr}.bay{min-height:230px}}
 @media(max-width:520px){.pages{grid-template-columns:1fr}.jb{border-radius:50% 50% 22px 22px/140px 140px 22px 22px}.pillar{display:none}.time{font-size:42px}}
-@media(prefers-reduced-motion:reduce){.arch,.pillar,.chase,.mq span,.playing .cd,.pages.flip{animation:none}}
+@media(prefers-reduced-motion:reduce){.arch,.pillar,.chase,.mq span,.playing .cd,.pages.flip{animation:none}.mq span{padding-left:0}}
+.vol.locked{opacity:.6}.vol.locked input{pointer-events:none}
 </style>
 </head>
 <body>
@@ -181,7 +182,7 @@ button:focus-visible,.strip:focus-visible,input:focus-visible,select:focus-visib
         <button class="tb" id="pause" type="button" aria-label="Pause"><svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg></button>
         <button class="tb" id="stop" type="button" aria-label="Stop"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/></svg></button>
         <button class="tb" id="next" type="button" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M15 5h3v14h-3zM4 5v14l10-7z"/></svg></button>
-        <label class="vol">VOL<input type="range" id="vol" min="0" max="100" step="5" value="60" aria-label="Volume"></label>
+        <label class="vol" id="volWrap"><span id="volLbl">VOL</span><input type="range" id="vol" min="0" max="100" step="5" value="60" aria-label="Volume"></label>
       </div>
     </div>
   </div>
@@ -383,10 +384,11 @@ async function loadDevices(){
   try{
     const j=await api("/me/player/devices");const ds=(j&&j.devices)||[];
     if(!ds.length){$("devices").innerHTML=`<option value="">No speakers found</option>`;device="";status("Open the Spotify app on your iPad, then tap Refresh.");return}
-    const keep=ds.find(d=>d.id===device)||ds.find(d=>d.is_active)||ds.find(d=>/tablet|smartphone/i.test(d.type))||ds[0];
+    const keep=ds.find(d=>d.is_active)||ds.find(d=>d.id===device)||ds.find(d=>/tablet|smartphone/i.test(d.type))||ds[0];
     device=keep.id||"";LS.set("sj_device",device);
     $("devices").innerHTML=ds.map(d=>`<option value="${esc(d.id||"")}"${d.id===device?" selected":""}>Play on: ${esc(d.name)}${d.is_active?" (active)":""}</option>`).join("");
     if(typeof keep.volume_percent==="number")$("vol").value=keep.volume_percent;
+    lockVol(keep.supports_volume===false);
   }catch(e){fail(e)}
 }
 $("devices").addEventListener("change",e=>{device=e.target.value;LS.set("sj_device",device)});
@@ -464,24 +466,25 @@ $("pause").addEventListener("click",()=>tr(async()=>{await api("/me/player/pause
 $("stop").addEventListener("click",()=>tr(async()=>{await api("/me/player/pause"+devQ("?"),{method:"PUT"});await api("/me/player/seek?position_ms=0"+devQ("&"),{method:"PUT"}).catch(()=>{});setPlaying(false);progress=0}));
 $("vol").addEventListener("change",async e=>{
   try{await api("/me/player/volume?volume_percent="+e.target.value+devQ("&"),{method:"PUT"});status("Volume "+e.target.value+"%")}
-  catch(err){if(err.status===403)status("Spotify won't change the volume on this device. Use the iPad's volume buttons.");else fail(err)}
+  catch(err){if(err.status===403){lockVol(true);status("Spotify won't change the volume on this device. Use the iPhone or iPad volume buttons.")}else fail(err)}
 });
 
+function lockVol(on){$("volWrap").classList.toggle("locked",on);$("vol").disabled=on;$("volLbl").textContent=on?"VOL: USE PHONE BUTTONS":"VOL"}
 /* ---------- display: clock, marquee, spectrum, CD ---------- */
 const PLAY_ICON='<svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg>',PAUSE_ICON='<svg viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
 function setPlaying(p){isPlaying=p;lastTick=Date.now();$("jb").classList.toggle("playing",p);$("state").innerHTML=p?PLAY_ICON:PAUSE_ICON;$("state").setAttribute("aria-label",p?"Playing":"Paused")}
 let mqText="";
-function setMq(t){t=("*** "+t+" ***").toUpperCase();if(t===mqText)return;mqText=t;const s=$("mq");s.textContent=t+"   "+t;s.style.animation="none";void s.offsetWidth;s.style.animation=""}
+function setMq(t){t=("*** "+t+" ***").toUpperCase();if(t===mqText)return;mqText=t;const s=$("mq");s.textContent=reduce?t:t+"   "+t;s.style.animation="none";void s.offsetWidth;s.style.animation=""}
 const fmt=ms=>{const s=Math.max(0,Math.floor(ms/1000));return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")};
 $("spec").innerHTML=Array.from({length:20},()=>"<div></div>").join("");
-const bars=[...$("spec").children],lv=bars.map(()=>.06);
+const bars=[...$("spec").children],lv=bars.map(()=>.06),STILL=bars.map((_,i)=>.35+.5*Math.abs(Math.sin(i*.9))*(1-i/30));
 setInterval(()=>{
   const now=Date.now();
   if(isPlaying){progress+=now-lastTick;if(duration&&progress>duration)progress=duration}
   lastTick=now;
   $("clock").textContent=(isPlaying||progress)?fmt(progress):"--:--";
   bars.forEach((b,i)=>{
-    const target=isPlaying&&!reduce?Math.min(1,(.25+Math.random()*.75)*(1-i/32)):.06;
+    const target=isPlaying?(reduce?STILL[i]:Math.min(1,(.25+Math.random()*.75)*(1-i/32))):.06;
     lv[i]=isPlaying?target:lv[i]*.7+.06*.3;b.style.height=(lv[i]*100).toFixed(0)+"%";
   });
 },120);
@@ -499,7 +502,8 @@ async function poll(){
     if(!j||!j.item){setPlaying(false);return}
     setPlaying(!!j.is_playing);
     progress=j.progress_ms||0;duration=j.item.duration_ms||0;
-    if(j.device&&typeof j.device.volume_percent==="number"&&document.activeElement!==$("vol"))$("vol").value=j.device.volume_percent;
+    if(j.device&&j.device.id&&j.device.id!==device){device=j.device.id;LS.set("sj_device",device);loadDevices()}
+    if(j.device){lockVol(j.device.supports_volume===false);if(typeof j.device.volume_percent==="number"&&document.activeElement!==$("vol"))$("vol").value=j.device.volume_percent}
     const it=j.item,artist=(it.artists||[]).map(a=>a.name).join(", ");
     curUri=it.uri;
     const k=pending.findIndex(p=>p.uri===it.uri);if(k>-1){pending=pending.slice(k+1);renderQueue()}
